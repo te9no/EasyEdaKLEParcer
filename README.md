@@ -59,7 +59,12 @@ npm run build
 1. `extension.json` の `version` を更新
 2. `package.json` / `package-lock.json` の `version` も同じ値に更新
 3. `npm ci` → `npm run build`
-4. GitHub Releases でタグを切って `.eext` を添付
+4. GitHub Releases でタグを切って `.eext` を添付（または GitHub Actions で自動添付）
+
+### GitHub Actions（自動リリース）
+
+- タグ `v0.1.20` のように `v*` を push すると、CI が `.eext` をビルドして Release に添付します。
+- タグの `vX.Y.Z` と `extension.json` / `package.json` の `version` が一致しない場合は失敗します。
 
 ## ライセンス
 
