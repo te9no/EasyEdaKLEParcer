@@ -1,0 +1,69 @@
+{
+  "name": "kle-importer-pro",
+  "uuid": "8587e6a1e73e260042ac4cb962df1d57",
+  "displayName": "KLE Importer Pro",
+  "description": "Import a KLE JSON/TXT and place SWxx (and optionally Dxx) by reading SW numbers from KLE legends.",
+  "version": "0.1.20",
+  "publisher": "local",
+  "engines": {
+    "eda": "^3.0.0"
+  },
+  "categories": "PCB",
+  "keywords": [
+    "KLE",
+    "Keyboard",
+    "PCB"
+  ],
+  "activationEvents": {
+    "onStartupFinished": true
+  },
+  "entry": "./dist/index",
+  "headerMenus": {
+    "pcb": [
+      {
+        "id": "kle-importer-pro-pcb-menu",
+        "title": "KLE Importer Pro",
+        "menuItems": [
+          {
+            "id": "kle-importer-pro-pcb-run",
+            "title": "Open...",
+            "registerFn": "run"
+          },
+          {
+            "id": "kle-importer-pro-pcb-ping",
+            "title": "Test ping",
+            "registerFn": "ping"
+          },
+          {
+            "id": "kle-importer-pro-pcb-close",
+            "title": "Close/Reset UI",
+            "registerFn": "closeUi"
+          }
+        ]
+      }
+    ],
+    "sch": [
+      {
+        "id": "kle-importer-pro-sch-menu",
+        "title": "KLE Importer Pro",
+        "menuItems": [
+          {
+            "id": "kle-importer-pro-sch-open",
+            "title": "Open...",
+            "registerFn": "run"
+          },
+          {
+            "id": "kle-importer-pro-sch-ping",
+            "title": "Test ping",
+            "registerFn": "ping"
+          },
+          {
+            "id": "kle-importer-pro-sch-close",
+            "title": "Close/Reset UI",
+            "registerFn": "closeUi"
+          }
+        ]
+      }
+    ]
+  }
+}

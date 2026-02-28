@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>KLE Importer Pro</title>
+    <style>
+      :root {
+        --bg: #ffffff;
+        --panel: #fafafa;
+        --border: #d9d9d9;
+        --text: #1b1b1b;
+        --muted: #666;
+        --primary: #1976d2;
+        --primaryText: #fff;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+        font-size: 13px;
+        line-height: 1.5;
+      }
+      .wrap {
+        padding: 14px 16px 16px;
+      }
+      h3 {
+        margin: 0 0 10px;
+        font-size: 16px;
+      }
+      .block {
+        margin-bottom: 12px;
+      }
+      .label {
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      button,
+      select,
+      input {
+        font: inherit;
+      }
+      button {
+        cursor: pointer;
+      }
+      .btn {
+        width: 100%;
+        padding: 10px;
+        border-radius: 6px;
+        border: 1px solid transparent;
+        background: var(--primary);
+        color: var(--primaryText);
+        font-weight: 600;
+      }
+      .btn.secondary {
+        background: #fff;
+        color: var(--text);
+        border-color: var(--border);
+        font-weight: 500;
+      }
+      .fileBtn {
+        width: 100%;
+        padding: 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: #fff;
+      }
+      .status {
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .panel {
+        padding: 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--panel);
+      }
+      .grid2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        align-items: center;
+        margin-top: 10px;
+      }
+      .help {
+        margin-top: 6px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-top: 8px;
+        user-select: none;
+      }
+      .error {
+        margin-top: 10px;
+        font-size: 12px;
+        color: #b00020;
+        min-height: 16px;
+      }
+      .actions {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 8px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h3>KLE Importer Pro</h3>
+
+      <div class="block">
+        <div class="label">1) KLEファイル選択</div>
+        <button id="fileBtn" class="fileBtn" type="button">JSON/TXT を選択</button>
+        <div id="fileStatus" class="status">未選択</div>
+      </div>
+
+      <div class="block">
+        <div class="label">2) キーピッチ</div>
+        <select id="pitch" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); background: #fff;">
+          <option value="19.05">通常 (19.05mm)</option>
+          <option value="17.00">狭ピッチ (17.00mm)</option>
+        </select>
+      </div>
+
+      <div class="block panel">
+        <div class="label">3) ダイオード</div>
+        <label class="row">
+          <input id="doDiode" type="checkbox" checked />
+          D1〜も配置する
+        </label>
+
+        <div class="grid2">
+          <label style="font-size: 12px;">
+            X(mm)<br />
+            <input id="dx" type="number" step="0.1" value="0" style="width: 100%; padding: 6px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--border);" />
+          </label>
+          <label style="font-size: 12px;">
+            Y(mm)<br />
+            <input id="dy" type="number" step="0.1" value="7.5" style="width: 100%; padding: 6px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--border);" />
+          </label>
+        </div>
+        <div class="help">スイッチ中心からの距離(mm)</div>
+      </div>
+
+      <div class="block panel">
+        <div class="label">4) SW番号の読み取り</div>
+        <div class="help">
+          KLEのレジェンド文字列に含まれる <code>SW1</code> / <code>SW2</code> ... を読み取り、
+          その番号のフットプリント <code>SW1</code> / <code>SW2</code> ... を対応位置へ移動します。<br />
+          <b>SWxx が無いキーは無視します。</b>
+        </div>
+      </div>
+
+      <div id="error" class="error"></div>
+
+      <div class="actions">
+        <button id="runBtn" class="btn" type="button">実行</button>
+      </div>
+    </div>
+
+    <script>
+      const CHANNEL = 'KLE_IMPORTER_PRO';
+
+      let fileContent = '';
+      let fileName = '';
+      let hasBridge = false;
+
+      const $ = (id) => document.getElementById(id);
+      const setError = (msg) => { $('error').textContent = msg || ''; };
+      const setFileStatus = (msg) => { $('fileStatus').textContent = msg || ''; };
+
+      function getEda() {
+        try { if (typeof window.eda !== 'undefined') return window.eda; } catch {}
+        try { if (window.parent && typeof window.parent.eda !== 'undefined') return window.parent.eda; } catch {}
+        try { if (window.top && typeof window.top.eda !== 'undefined') return window.top.eda; } catch {}
+        return null;
+      }
+
+      function updateDiodeEnabled() {
+        const enabled = $('doDiode').checked;
+        $('dx').disabled = !enabled;
+        $('dy').disabled = !enabled;
+        $('dx').style.opacity = enabled ? '1' : '0.6';
+        $('dy').style.opacity = enabled ? '1' : '0.6';
+      }
+
+      $('doDiode').addEventListener('change', updateDiodeEnabled);
+      updateDiodeEnabled();
+
+      // Handshake with parent extension to ensure postMessage bridge works.
+      (function hello() {
+        try {
+          const token = 'hello:' + String(Date.now()) + ':' + Math.random().toString(16).slice(2);
+          const msg = { channel: CHANNEL, type: 'HELLO', token };
+          const onMessage = (event) => {
+            const data = event && event.data;
+            if (!data || data.channel !== CHANNEL) return;
+            if (data.type !== 'HELLO_ACK') return;
+            if (data.token !== token) return;
+            window.removeEventListener('message', onMessage);
+            hasBridge = true;
+          };
+          window.addEventListener('message', onMessage);
+          try { window.parent && window.parent.postMessage(msg, '*'); } catch {}
+          try { window.top && window.top !== window.parent && window.top.postMessage(msg, '*'); } catch {}
+          setTimeout(() => {
+            try { window.removeEventListener('message', onMessage); } catch {}
+            if (!hasBridge) {
+              // Not fatal if we can call into `eda.*` directly.
+              const api = getEda();
+              if (!(api && typeof api.jlc_eda_kle_importer_runPlacement === 'function')) {
+                setError('拡張との通信が確立できませんでした。EasyEDAを再起動してから再度お試しください。');
+              }
+            }
+          }, 1500);
+        } catch {}
+      })();
+
+      $('fileBtn').addEventListener('click', async () => {
+        setError('');
+        try {
+          // Preferred: direct call into extension bridge (most reliable).
+          const api = getEda();
+          if (api && typeof api.jlc_eda_kle_importer_pickFile === 'function') {
+            setFileStatus('選択中...');
+            const picked = await api.jlc_eda_kle_importer_pickFile();
+            if (!picked) { setFileStatus('未選択'); return; }
+            fileContent = String(picked.text || '');
+            fileName = String(picked.name || '');
+            setFileStatus('選択: ' + fileName);
+            return;
+          }
+
+          const token = String(Date.now()) + ':' + Math.random().toString(16).slice(2);
+          setFileStatus('選択中...');
+          const msg = { channel: CHANNEL, type: 'PICK_FILE', token };
+          try { window.parent && window.parent.postMessage(msg, '*'); } catch {}
+          try { window.top && window.top !== window.parent && window.top.postMessage(msg, '*'); } catch {}
+
+          const onMessage = (event) => {
+            const data = event && event.data;
+            if (!data || data.channel !== CHANNEL) return;
+            if (data.type !== 'FILE_PICKED') return;
+            if (data.token !== token) return;
+            window.removeEventListener('message', onMessage);
+
+            if (!data.ok) {
+              if (data.error && data.error !== 'cancelled') {
+                setError('ファイル選択でエラー: ' + data.error);
+              } else {
+                setError('');
+              }
+              setFileStatus('未選択');
+              return;
+            }
+
+            fileContent = (data.payload && data.payload.text) ? String(data.payload.text) : '';
+            fileName = (data.payload && data.payload.name) ? String(data.payload.name) : '';
+            setFileStatus('選択: ' + fileName);
+          };
+
+          window.addEventListener('message', onMessage);
+
+          // Safety timeout
+          setTimeout(() => {
+            try {
+              window.removeEventListener('message', onMessage);
+            } catch {}
+            if (!fileContent) setFileStatus('未選択');
+          }, 30000);
+        } catch (e) {
+          setError('ファイル選択でエラー: ' + (e && e.message ? e.message : String(e)));
+          setFileStatus('未選択');
+        }
+      });
+
+      $('runBtn').addEventListener('click', () => {
+        setError('');
+        if (!fileContent) {
+          setError('KLEファイルを選択してください。');
+          return;
+        }
+
+        const pitch = parseFloat($('pitch').value);
+        const doDiode = $('doDiode').checked;
+        const dx = parseFloat($('dx').value);
+        const dy = parseFloat($('dy').value);
+
+        if (!Number.isFinite(pitch)) {
+          setError('ピッチが不正です。');
+          return;
+        }
+        if (doDiode && (!Number.isFinite(dx) || !Number.isFinite(dy))) {
+          setError('ダイオードのオフセット(X/Y)は数値で入力してください。');
+          return;
+        }
+
+        const api = getEda();
+        if (api && typeof api.jlc_eda_kle_importer_runPlacement === 'function') {
+          api.jlc_eda_kle_importer_runPlacement({
+            json: fileContent,
+            pitch,
+            dx: Number.isFinite(dx) ? dx : 0,
+            dy: Number.isFinite(dy) ? dy : 0,
+            doDiode,
+            orderMode: 'legend',
+            legendFillMissing: false
+          }).catch((e) => {
+            setError('実行でエラー: ' + (e && e.message ? e.message : String(e)));
+          });
+          try { if (typeof api.jlc_eda_kle_importer_closeUi === 'function') api.jlc_eda_kle_importer_closeUi(); } catch {}
+          return;
+        }
+
+        const token = String(Date.now()) + ':' + Math.random().toString(16).slice(2);
+        const runMsg = {
+          channel: CHANNEL,
+          type: 'RUN',
+          token,
+          payload: {
+            json: fileContent,
+            pitch,
+            dx: Number.isFinite(dx) ? dx : 0,
+            dy: Number.isFinite(dy) ? dy : 0,
+            doDiode,
+            orderMode: 'legend',
+            legendFillMissing: false
+          }
+        };
+        try { window.parent && window.parent.postMessage(runMsg, '*'); } catch {}
+        try { window.top && window.top !== window.parent && window.top.postMessage(runMsg, '*'); } catch {}
+
+        // Show an error if parent never acknowledges (likely postMessage bridge failure).
+        const onAck = (event) => {
+          const data = event && event.data;
+          if (!data || data.channel !== CHANNEL) return;
+          if (data.type !== 'RUN_ACK') return;
+          if (data.token !== token) return;
+          window.removeEventListener('message', onAck);
+        };
+        window.addEventListener('message', onAck);
+        setTimeout(() => {
+          try { window.removeEventListener('message', onAck); } catch {}
+          // If still no ack, show error. Don't overwrite other errors.
+          setError('実行できませんでした（拡張側に届いていません）。EasyEDAを再起動して再度お試しください。');
+        }, 1200);
+
+        // Ask parent to close the UI (some EasyEDA states can hide header/menu when an iframe stays open).
+        const closeMsg = { channel: CHANNEL, type: 'CLOSE' };
+        try { window.parent && window.parent.postMessage(closeMsg, '*'); } catch {}
+        try { window.top && window.top !== window.parent && window.top.postMessage(closeMsg, '*'); } catch {}
+      });
+    </script>
+  </body>
+</html>
