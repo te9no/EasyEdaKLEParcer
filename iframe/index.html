@@ -157,9 +157,39 @@
         </div>
       </div>
 
+      <div class="block panel">
+        <div class="label">5) スイッチプレート書き出し (SVG/DXF)</div>
+        <div class="grid2" style="margin-top: 0;">
+          <label style="font-size: 12px;">
+            形式<br />
+            <select id="plateFormat" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); background: #fff;">
+              <option value="svg" selected>SVG</option>
+              <option value="dxf">DXF</option>
+            </select>
+          </label>
+          <label style="font-size: 12px;">
+            外周マージン(mm)<br />
+            <input id="plateMargin" type="number" step="0.1" value="5.0" style="width: 100%; padding: 6px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--border);" />
+          </label>
+        </div>
+
+        <div class="grid2">
+          <label style="font-size: 12px;">
+            スイッチ穴サイズ(mm)<br />
+            <input id="plateCutout" type="number" step="0.1" value="14.0" style="width: 100%; padding: 6px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--border);" />
+          </label>
+          <label class="row" style="align-items: flex-end; margin-top: 18px;">
+            <input id="plateRotate" type="checkbox" checked />
+            キー回転を反映
+          </label>
+        </div>
+        <div class="help">外周は「スイッチ穴ポリゴンの凸包 + マージン(mm)」を外側へオフセットした外形ポリゴンです。まずは MX 想定で 14.0mm 角になっています（必要なら変更してください）。SVGはY下向きのまま、DXFはYを反転して出力します。</div>
+      </div>
+
       <div id="error" class="error"></div>
 
       <div class="actions">
+        <button id="exportPlateBtn" class="btn secondary" type="button">スイッチプレートを書き出し</button>
         <button id="runBtn" class="btn" type="button">実行</button>
       </div>
     </div>
@@ -192,6 +222,301 @@
 
       $('doDiode').addEventListener('change', updateDiodeEnabled);
       updateDiodeEnabled();
+
+      function stripBomAndTrim(text) {
+        return String(text || '').replace(/^\uFEFF/, '').trim();
+      }
+
+      function parseSwHint(label) {
+        if (typeof label !== 'string') return null;
+        const m = /\bSW\s*([0-9]+)\b/i.exec(label);
+        if (!m) return null;
+        const n = parseInt(m[1], 10);
+        return Number.isFinite(n) ? n : null;
+      }
+
+      function parseKleLayout(rawText, pitchMm) {
+        const text = stripBomAndTrim(rawText);
+        let kle;
+        try {
+          kle = JSON.parse(text);
+        } catch (e) {
+          // Try extracting the main array
+          const a = text.indexOf('[');
+          const b = text.lastIndexOf(']');
+          if (a !== -1 && b !== -1 && b > a) {
+            kle = JSON.parse(stripBomAndTrim(text.slice(a, b + 1)));
+          } else {
+            throw e;
+          }
+        }
+        if (!Array.isArray(kle)) throw new Error('KLE JSON must be an array');
+
+        const keys = [];
+        let rx = 0, ry = 0, x = 0, y = 0, r = 0;
+
+        const rotateAround = (px, py, ox, oy, deg) => {
+          const rad = (deg * Math.PI) / 180;
+          const dx = px - ox;
+          const dy = py - oy;
+          return {
+            x: ox + (dx * Math.cos(rad) - dy * Math.sin(rad)),
+            y: oy + (dx * Math.sin(rad) + dy * Math.cos(rad))
+          };
+        };
+
+        kle.forEach((row) => {
+          if (!Array.isArray(row)) return;
+          x = rx;
+          let w = 1, h = 1;
+          row.forEach((item) => {
+            if (item && typeof item === 'object' && !Array.isArray(item)) {
+              if (item.r !== undefined) r = item.r;
+              if (item.rx !== undefined) { rx = item.rx; x = rx; y = ry; }
+              if (item.ry !== undefined) { ry = item.ry; y = ry; }
+              if (item.w !== undefined) w = item.w;
+              if (item.h !== undefined) h = item.h;
+              if (item.x !== undefined) x += item.x;
+              if (item.y !== undefined) y += item.y;
+            } else if (typeof item === 'string') {
+              const label = item;
+              const cx = x + w / 2;
+              const cy = y + h / 2;
+              const p = rotateAround(cx, cy, rx, ry, r);
+              keys.push({
+                label,
+                swHint: parseSwHint(label),
+                rot: r,
+                // mm (KLE unit * pitch)
+                x: p.x * pitchMm,
+                y: p.y * pitchMm
+              });
+              x += w;
+              w = 1; h = 1;
+            }
+          });
+          y += 1;
+        });
+
+        return keys;
+      }
+
+      function rectPoints(cx, cy, size, rotDeg, applyRot) {
+        const h = size / 2;
+        const pts = [
+          { x: cx - h, y: cy - h },
+          { x: cx + h, y: cy - h },
+          { x: cx + h, y: cy + h },
+          { x: cx - h, y: cy + h }
+        ];
+        if (!applyRot || !rotDeg) return pts;
+        const rad = (rotDeg * Math.PI) / 180;
+        return pts.map(p => {
+          const dx = p.x - cx;
+          const dy = p.y - cy;
+          return {
+            x: cx + (dx * Math.cos(rad) - dy * Math.sin(rad)),
+            y: cy + (dx * Math.sin(rad) + dy * Math.cos(rad))
+          };
+        });
+      }
+
+      function computeBounds(polys) {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        polys.forEach(poly => {
+          poly.forEach(p => {
+            if (p.x < minX) minX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y > maxY) maxY = p.y;
+          });
+        });
+        if (!Number.isFinite(minX)) return null;
+        return { minX, minY, maxX, maxY };
+      }
+
+      function toYUpPolys(polys) {
+        return polys.map(poly => poly.map(p => ({ x: p.x, y: -p.y })));
+      }
+
+      function fromYUpPoly(poly) {
+        return poly.map(p => ({ x: p.x, y: -p.y }));
+      }
+
+      function convexHull(points) {
+        // Monotonic chain, returns hull in CCW (y-up) without repeating first point.
+        const pts = points
+          .filter(p => Number.isFinite(p.x) && Number.isFinite(p.y))
+          .map(p => ({ x: p.x, y: p.y }));
+        if (pts.length <= 1) return pts;
+
+        pts.sort((a, b) => (a.x - b.x) || (a.y - b.y));
+
+        const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+
+        const lower = [];
+        for (const p of pts) {
+          while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+            lower.pop();
+          }
+          lower.push(p);
+        }
+
+        const upper = [];
+        for (let i = pts.length - 1; i >= 0; i--) {
+          const p = pts[i];
+          while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+            upper.pop();
+          }
+          upper.push(p);
+        }
+
+        upper.pop();
+        lower.pop();
+        return lower.concat(upper);
+      }
+
+      function lineFromPoints(p1, p2) {
+        // ax + by = c
+        const a = p2.y - p1.y;
+        const b = p1.x - p2.x;
+        const c = a * p1.x + b * p1.y;
+        return { a, b, c };
+      }
+
+      function intersectLines(l1, l2) {
+        const det = l1.a * l2.b - l2.a * l1.b;
+        if (Math.abs(det) < 1e-12) return null;
+        const x = (l1.c * l2.b - l2.c * l1.b) / det;
+        const y = (l1.a * l2.c - l2.a * l1.c) / det;
+        return { x, y };
+      }
+
+      function offsetConvexPolygon(poly, offset) {
+        // poly must be CCW in y-up coordinates.
+        if (!poly || poly.length < 3) return null;
+        const n = poly.length;
+
+        const norm = (vx, vy) => {
+          const len = Math.hypot(vx, vy) || 1;
+          return { x: vx / len, y: vy / len };
+        };
+
+        const offsetLines = [];
+        for (let i = 0; i < n; i++) {
+          const p = poly[i];
+          const q = poly[(i + 1) % n];
+          const dx = q.x - p.x;
+          const dy = q.y - p.y;
+          // For CCW polygon (y-up), outward normal is the right normal.
+          const nn = norm(dy, -dx);
+          const p1 = { x: p.x + nn.x * offset, y: p.y + nn.y * offset };
+          const p2 = { x: q.x + nn.x * offset, y: q.y + nn.y * offset };
+          offsetLines.push(lineFromPoints(p1, p2));
+        }
+
+        const out = [];
+        for (let i = 0; i < n; i++) {
+          const prev = offsetLines[(i - 1 + n) % n];
+          const curr = offsetLines[i];
+          const ip = intersectLines(prev, curr);
+          if (!ip) return null;
+          out.push(ip);
+        }
+        return out;
+      }
+
+      function downloadText(filename, text, mime) {
+        const blob = new Blob([text], { type: mime || 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          try { a.remove(); } catch {}
+          try { URL.revokeObjectURL(url); } catch {}
+        }, 0);
+      }
+
+      function generateSvgPlate(polys, outlineRect) {
+        // KLE coordinates increase Y as rows go down. SVG also uses y-down, so we DO NOT flip Y here.
+        const allPolys = [...polys, outlineRect];
+        const b = computeBounds(allPolys);
+        const pad = 2; // a little extra in viewbox for visibility
+        const minX = b.minX - pad, minY = b.minY - pad, maxX = b.maxX + pad, maxY = b.maxY + pad;
+        const w = maxX - minX, h = maxY - minY;
+
+        const polyToPath = (poly) => {
+          const d = poly.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(3)} ${p.y.toFixed(3)}`).join(' ') + ' Z';
+          return d;
+        };
+
+        const cutoutsPath = polys.length ? polys.map(poly => polyToPath(poly)).join(' ') : '';
+        const outlinePath = polyToPath(outlineRect);
+
+        return `<?xml version="1.0" encoding="UTF-8"?>\n` +
+          `<svg xmlns="http://www.w3.org/2000/svg" width="${w.toFixed(3)}mm" height="${h.toFixed(3)}mm" viewBox="${minX.toFixed(3)} ${minY.toFixed(3)} ${w.toFixed(3)} ${h.toFixed(3)}">\n` +
+          `  <g fill="none" stroke="#000" stroke-width="0.2">\n` +
+          `    <path d="${outlinePath}"/>\n` +
+          (cutoutsPath ? `    <path d="${cutoutsPath}"/>\n` : '') +
+          `  </g>\n` +
+          `</svg>\n`;
+      }
+
+      function dxfLine(layer, x1, y1, x2, y2) {
+        const f = (n) => Number(n).toFixed(4);
+        // DXF viewers/CAD are typically y-up. KLE/SVG are y-down, so flip Y for DXF export.
+        return `0\nLINE\n8\n${layer}\n10\n${f(x1)}\n20\n${f(y1)}\n11\n${f(x2)}\n21\n${f(y2)}\n`;
+      }
+
+      function polyToDxfLines(layer, poly) {
+        let out = '';
+        for (let i = 0; i < poly.length; i++) {
+          const a = poly[i];
+          const b = poly[(i + 1) % poly.length];
+          out += dxfLine(layer, a.x, -a.y, b.x, -b.y);
+        }
+        return out;
+      }
+
+      function generateDxfPlate(polys, outlineRect) {
+        let entities = '';
+        entities += polyToDxfLines('OUTLINE', outlineRect);
+        polys.forEach(poly => { entities += polyToDxfLines('CUTOUT', poly); });
+        return `0\nSECTION\n2\nHEADER\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n${entities}0\nENDSEC\n0\nEOF\n`;
+      }
+
+      function makeOutlineConvexOffset(polys, margin) {
+        // Compute convex hull on all vertices (in y-up), then offset outward by margin.
+        const yUpPolys = toYUpPolys(polys);
+        const points = [];
+        yUpPolys.forEach(poly => poly.forEach(p => points.push(p)));
+
+        const hull = convexHull(points);
+        if (!hull || hull.length < 3) {
+          // Fallback: BBox rectangle
+          const b = computeBounds(polys);
+          const minX = b.minX - margin;
+          const minY = b.minY - margin;
+          const maxX = b.maxX + margin;
+          const maxY = b.maxY + margin;
+          return [
+            { x: minX, y: minY },
+            { x: maxX, y: minY },
+            { x: maxX, y: maxY },
+            { x: minX, y: maxY }
+          ];
+        }
+
+        const off = offsetConvexPolygon(hull, margin);
+        if (!off) {
+          // Fallback: just hull (no offset)
+          return fromYUpPoly(hull);
+        }
+        return fromYUpPoly(off);
+      }
 
       // Handshake with parent extension to ensure postMessage bridge works.
       (function hello() {
@@ -277,6 +602,57 @@
         } catch (e) {
           setError('ファイル選択でエラー: ' + (e && e.message ? e.message : String(e)));
           setFileStatus('未選択');
+        }
+      });
+
+      $('exportPlateBtn').addEventListener('click', () => {
+        setError('');
+        if (!fileContent) {
+          setError('KLEファイルを選択してください。');
+          return;
+        }
+
+        const pitch = parseFloat($('pitch').value);
+        if (!Number.isFinite(pitch) || pitch <= 0) {
+          setError('ピッチが不正です。');
+          return;
+        }
+
+        const fmt = String($('plateFormat').value || 'svg');
+        const margin = parseFloat($('plateMargin').value);
+        const cutout = parseFloat($('plateCutout').value);
+        const applyRot = Boolean($('plateRotate').checked);
+        if (!Number.isFinite(margin) || margin < 0) {
+          setError('外周マージン(mm)が不正です。');
+          return;
+        }
+        if (!Number.isFinite(cutout) || cutout <= 0) {
+          setError('スイッチ穴サイズ(mm)が不正です。');
+          return;
+        }
+
+        let keys;
+        try {
+          keys = parseKleLayout(fileContent, pitch);
+        } catch (e) {
+          setError('KLEの解析に失敗: ' + (e && e.message ? e.message : String(e)));
+          return;
+        }
+        if (!keys.length) {
+          setError('KLEにキーが見つかりませんでした。');
+          return;
+        }
+
+        const cutouts = keys.map(k => rectPoints(k.x, k.y, cutout, k.rot, applyRot));
+        const outline = makeOutlineConvexOffset(cutouts, margin);
+
+        const base = (fileName || 'kle').replace(/\.[^.]+$/, '');
+        if (fmt === 'dxf') {
+          const dxf = generateDxfPlate(cutouts, outline);
+          downloadText(`switch-plate_${base}.dxf`, dxf, 'application/dxf');
+        } else {
+          const svg = generateSvgPlate(cutouts, outline);
+          downloadText(`switch-plate_${base}.svg`, svg, 'image/svg+xml');
         }
       });
 

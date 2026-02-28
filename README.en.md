@@ -10,6 +10,8 @@ Keys without `SWxx` are ignored.
 - Parse `SW1`, `SW2`, ... from KLE legend strings
 - Move PCB footprints `SW1`, `SW2`, ... to the corresponding key positions
 - Optionally place diodes `D1`, `D2`, ... with an offset (mm) from the switch center
+- Export a simple switch plate as SVG/DXF (switch cutouts + rectangular outline)
+  - Outline is a convex-hull polygon + margin offset
 
 ## Requirements
 
@@ -28,7 +30,7 @@ Keys without `SWxx` are ignored.
 2. Top menu → **KLE Importer Pro** → **Open...**
 3. Click **Select JSON/TXT** and choose your KLE file
 4. Set pitch and diode options (optional)
-5. Click **Run**
+5. Click **Run** (placement) or **Export Switch Plate** (SVG/DXF)
 
 ### How to write SW numbers in KLE (important)
 
