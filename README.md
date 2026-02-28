@@ -2,6 +2,8 @@
 
 KLE (Keyboard Layout Editor) の JSON/TXT を読み込み、**KLEのレジェンド内に書いた `SWxx` に従って** EasyEDA Pro のPCB上のフットプリント `SWxx`（任意で `Dxx`）を対応する位置へ移動します。
 
+English README: `README.en.md`
+
 ## できること
 
 - KLEの各キーのレジェンド文字列から `SW1` / `SW2` / ... を検出
