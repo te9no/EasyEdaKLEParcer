@@ -21,6 +21,7 @@
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
         font-size: 13px;
         line-height: 1.5;
+        overflow: auto;
       }
       .wrap {
         padding: 14px 16px 16px;
@@ -183,13 +184,81 @@
             キー回転を反映
           </label>
         </div>
+
+        <div class="grid2">
+          <label style="font-size: 12px;">
+            外形モード<br />
+            <select id="plateOutlineMode" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); background: #fff;">
+              <option value="hull" selected>凸包 + オフセット</option>
+              <option value="rectUnion">四角形 union（ブーリアン）</option>
+            </select>
+          </label>
+          <label style="font-size: 12px;">
+            union用マージン(mm)<br />
+            <input id="plateRectUnionMargin" type="number" step="0.1" value="2.0" style="width: 100%; padding: 6px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--border);" />
+          </label>
+        </div>
         <div class="help">外周は「スイッチ穴ポリゴンの凸包 + マージン(mm)」を外側へオフセットした外形ポリゴンです。まずは MX 想定で 14.0mm 角になっています（必要なら変更してください）。SVGはY下向きのまま、DXFはYを反転して出力します。</div>
+      </div>
+
+      <div class="block panel">
+        <div class="label">7) ケース外形を書き出し (SVG/DXF)</div>
+        <div class="grid2" style="margin-top: 0;">
+          <label style="font-size: 12px;">
+            形式<br />
+            <select id="caseFormat" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); background: #fff;">
+              <option value="svg" selected>SVG</option>
+              <option value="dxf">DXF</option>
+            </select>
+          </label>
+          <label style="font-size: 12px;">
+            外形ソース<br />
+            <select id="caseOutlineSource" style="width: 100%; padding: 6px; border-radius: 6px; border: 1px solid var(--border); background: #fff;">
+              <option value="board" selected>PCB外形(BoardOutline レイヤー11)</option>
+              <option value="selected">選択中の外形図形</option>
+              <option value="plateHull">SW中心から凸包+オフセット（フットプリント）</option>
+              <option value="rectUnion">SW矩形マージ（フットプリント中心）</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="grid2">
+          <label style="font-size: 12px;">
+            SW矩形サイズ(mm)（plateHull/rectUnion）<br />
+            <input id="caseOutlineRectSize" type="number" step="0.1" value="19.05" style="width: 100%; padding: 6px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--border);" />
+          </label>
+          <label style="font-size: 12px;">
+            矩形マージ用マージン(mm)（rectUnion/plateHull）<br />
+            <input id="caseRectUnionMargin" type="number" step="0.1" value="2.0" style="width: 100%; padding: 6px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--border);" />
+          </label>
+        </div>
+
+        <div class="grid2">
+          <label style="font-size: 12px;">
+            PCB外形からのクリアランス(mm)<br />
+            <input id="caseClearance" type="number" step="0.05" value="0.2" style="width: 100%; padding: 6px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--border);" />
+          </label>
+          <label style="font-size: 12px;">
+            壁厚(mm)（外側追加）<br />
+            <input id="caseWall" type="number" step="0.1" value="2.0" style="width: 100%; padding: 6px; box-sizing: border-box; border-radius: 6px; border: 1px solid var(--border);" />
+          </label>
+        </div>
+
+        <label class="row">
+          <input id="caseHoles" type="checkbox" checked />
+          SW穴も書き出す（KLEから生成）
+        </label>
+        <div class="help">
+          出力内容：<b>PCB_CLEARANCE</b>（PCB外形+クリアランス）と <b>CASE_OUTER</b>（+壁厚）を別レイヤーで書き出します。<br />
+          DXFはY上向き、SVGは表示用にY反転して出力します。FreeCAD/Fusion等でシェル化してください。
+        </div>
       </div>
 
       <div id="error" class="error"></div>
 
       <div class="actions">
         <button id="exportPlateBtn" class="btn secondary" type="button">スイッチプレートを書き出し</button>
+        <button id="exportCaseBtn" class="btn secondary" type="button">ケース外形を書き出し</button>
         <button id="runBtn" class="btn" type="button">実行</button>
       </div>
     </div>
@@ -622,6 +691,8 @@
         const margin = parseFloat($('plateMargin').value);
         const cutout = parseFloat($('plateCutout').value);
         const applyRot = Boolean($('plateRotate').checked);
+        const outlineMode = String($('plateOutlineMode').value || 'hull');
+        const rectUnionMargin = parseFloat($('plateRectUnionMargin').value);
         if (!Number.isFinite(margin) || margin < 0) {
           setError('外周マージン(mm)が不正です。');
           return;
@@ -630,7 +701,41 @@
           setError('スイッチ穴サイズ(mm)が不正です。');
           return;
         }
+        if (outlineMode === 'rectUnion' && (!Number.isFinite(rectUnionMargin) || rectUnionMargin < 0)) {
+          setError('union用マージン(mm)が不正です。');
+          return;
+        }
 
+        const base = (fileName || 'kle').replace(/\.[^.]+$/, '');
+
+        // Preferred: ask extension backend to generate SVG/DXF (supports rectUnion and avoids iframe dependency issues).
+        const api = getEda();
+        if (api && typeof api.jlc_eda_kle_importer_exportPlate === 'function') {
+          api.jlc_eda_kle_importer_exportPlate({
+            json: fileContent,
+            pitch,
+            format: (fmt === 'dxf') ? 'dxf' : 'svg',
+            marginMm: margin,
+            cutoutSizeMm: cutout,
+            applyKeyRotation: applyRot,
+            outlineMode: (outlineMode === 'rectUnion') ? 'rectUnion' : 'hull',
+            rectUnionMarginMm: Number.isFinite(rectUnionMargin) ? rectUnionMargin : 2.0,
+            fileName: fileName || ''
+          }).then((res) => {
+            if (!res || !res.ok) {
+              setError('書き出しに失敗しました。');
+              return;
+            }
+            const name = res.filename || ((fmt === 'dxf') ? `switch-plate_${base}.dxf` : `switch-plate_${base}.svg`);
+            const text = String(res.text || '');
+            downloadText(name, text, (fmt === 'dxf') ? 'application/dxf' : 'image/svg+xml');
+          }).catch((e) => {
+            setError('書き出しでエラー: ' + (e && e.message ? e.message : String(e)));
+          });
+          return;
+        }
+
+        // Fallback: old iframe-only hull export (rectUnion not supported without backend).
         let keys;
         try {
           keys = parseKleLayout(fileContent, pitch);
@@ -646,7 +751,6 @@
         const cutouts = keys.map(k => rectPoints(k.x, k.y, cutout, k.rot, applyRot));
         const outline = makeOutlineConvexOffset(cutouts, margin);
 
-        const base = (fileName || 'kle').replace(/\.[^.]+$/, '');
         if (fmt === 'dxf') {
           const dxf = generateDxfPlate(cutouts, outline);
           downloadText(`switch-plate_${base}.dxf`, dxf, 'application/dxf');
@@ -731,6 +835,81 @@
         const closeMsg = { channel: CHANNEL, type: 'CLOSE' };
         try { window.parent && window.parent.postMessage(closeMsg, '*'); } catch {}
         try { window.top && window.top !== window.parent && window.top.postMessage(closeMsg, '*'); } catch {}
+      });
+
+      $('exportCaseBtn').addEventListener('click', async () => {
+        setError('');
+        if (!fileContent) {
+          setError('KLEファイルを選択してください。');
+          return;
+        }
+
+        const pitch = parseFloat($('pitch').value);
+        if (!Number.isFinite(pitch) || pitch <= 0) {
+          setError('ピッチが不正です。');
+          return;
+        }
+
+        const fmt = String($('caseFormat').value || 'svg');
+        const outlineSource = String($('caseOutlineSource').value || 'board');
+        const outlineRectSizeMm = parseFloat(($('caseOutlineRectSize') && $('caseOutlineRectSize').value) || '');
+        const rectUnionMarginMm = parseFloat(($('caseRectUnionMargin') && $('caseRectUnionMargin').value) || '');
+        const clearance = parseFloat($('caseClearance').value);
+        const wall = parseFloat($('caseWall').value);
+        const includeHoles = Boolean($('caseHoles').checked);
+        const holeSize = parseFloat($('plateCutout').value);
+        const applyRot = Boolean($('plateRotate').checked);
+
+        if (!Number.isFinite(clearance) || clearance < 0) {
+          setError('クリアランス(mm)が不正です。');
+          return;
+        }
+        if (!Number.isFinite(wall) || wall < 0) {
+          setError('壁厚(mm)が不正です。');
+          return;
+        }
+        if (includeHoles && (!Number.isFinite(holeSize) || holeSize <= 0)) {
+          setError('スイッチ穴サイズ(mm)が不正です。');
+          return;
+        }
+        if ((outlineSource === 'plateHull' || outlineSource === 'rectUnion') && (!Number.isFinite(outlineRectSizeMm) || outlineRectSizeMm <= 0)) {
+          setError('SW矩形サイズ(mm)が不正です。');
+          return;
+        }
+        if ((outlineSource === 'plateHull' || outlineSource === 'rectUnion') && (!Number.isFinite(rectUnionMarginMm) || rectUnionMarginMm < 0)) {
+          setError('矩形マージ用マージン(mm)が不正です。');
+          return;
+        }
+
+        const api = getEda();
+        if (!(api && typeof api.jlc_eda_kle_importer_exportCase === 'function')) {
+          setError('ケース書き出しAPIが見つかりません。EasyEDAを再起動して再度お試しください。');
+          return;
+        }
+
+        try {
+          const res = await api.jlc_eda_kle_importer_exportCase({
+            json: fileContent,
+            pitch,
+            format: (fmt === 'dxf') ? 'dxf' : 'svg',
+            boardClearanceMm: clearance,
+            wallThicknessMm: wall,
+            includeKeyHoles: includeHoles,
+            keyHoleSizeMm: includeHoles ? holeSize : 0,
+            applyKeyRotation: applyRot,
+            outlineSource,
+            outlineRectSizeMm: outlineRectSizeMm,
+            rectUnionMarginMm: rectUnionMarginMm,
+            fileName: fileName || ''
+          });
+          if (!res || !res.ok) {
+            setError('ケース書き出しに失敗しました。');
+            return;
+          }
+          downloadText(String(res.filename || 'case.' + fmt), String(res.text || ''), (fmt === 'dxf') ? 'application/dxf' : 'image/svg+xml');
+        } catch (e) {
+          setError('ケース書き出しでエラー: ' + (e && e.message ? e.message : String(e)));
+        }
       });
     </script>
   </body>

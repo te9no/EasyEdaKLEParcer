@@ -10,8 +10,9 @@ Keys without `SWxx` are ignored.
 - Parse `SW1`, `SW2`, ... from KLE legend strings
 - Move PCB footprints `SW1`, `SW2`, ... to the corresponding key positions
 - Optionally place diodes `D1`, `D2`, ... with an offset (mm) from the switch center
-- Export a simple switch plate as SVG/DXF (switch cutouts + rectangular outline)
+- Export a simple switch plate as SVG/DXF (switch cutouts + outline)
   - Outline is a convex-hull polygon + margin offset
+- Export case outlines as SVG/DXF (offset from PCB outline, optionally including key holes)
 
 ## Requirements
 
@@ -30,7 +31,19 @@ Keys without `SWxx` are ignored.
 2. Top menu → **KLE Importer Pro** → **Open...**
 3. Click **Select JSON/TXT** and choose your KLE file
 4. Set pitch and diode options (optional)
-5. Click **Run** (placement) or **Export Switch Plate** (SVG/DXF)
+5. Click **Run** (placement), **Export Switch Plate** (SVG/DXF), or **Export Case Outline** (SVG/DXF)
+
+### Switch plate outline modes
+
+- In **Export Switch Plate**, `Rect union (boolean)` usually follows the shape better than a convex hull (tune the union margin in mm).
+
+### Case outline (DXF/SVG)
+
+- **Export Case Outline** outputs two offset outlines from the PCB `BoardOutline` (layer 11):
+  - `PCB_CLEARANCE` = `+clearance (mm)`
+  - `CASE_OUTER` = `+clearance (mm) + wall thickness (mm)`
+  (DXF uses layer names; SVG uses `data-name` on paths.)
+- Optionally exports key holes generated from the KLE layout.
 
 ### How to write SW numbers in KLE (important)
 

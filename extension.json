@@ -3,7 +3,7 @@
   "uuid": "8587e6a1e73e260042ac4cb962df1d57",
   "displayName": "KLE Importer Pro",
   "description": "Import a KLE JSON/TXT and place SWxx (and optionally Dxx) by reading SW numbers from KLE legends.",
-  "version": "0.1.23",
+  "version": "0.1.46",
   "publisher": "local",
   "engines": {
     "eda": "^3.0.0"
